@@ -30,9 +30,11 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/trace"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	ctrlUtil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	clv1alpha2 "github.com/netgroup-polito/CrownLabs/operators/api/v1alpha2"
 	"github.com/netgroup-polito/CrownLabs/operators/pkg/controller/common"
@@ -55,11 +57,18 @@ type Reconciler struct {
 
 // SetupWithManager registers a new controller for SharedVolume resources.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager, concurrency int) error {
+	pred, err := r.TargetLabel.GetPredicate()
+	if err != nil {
+		return fmt.Errorf("error creating predicate for sharedvolume controller: %w", err)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&clv1alpha2.SharedVolume{}).
+		For(&clv1alpha2.SharedVolume{}, builder.WithPredicates(pred)).
 		Owns(&v1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
 		//FIXME: Should also Watch for Templates in case it's in Deleting phase
+		Watches(&clv1alpha2.Template{},
+			handler.EnqueueRequestsFromMapFunc(r.templateToSharedVolumes)).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: concurrency,
 		}).
@@ -276,4 +285,33 @@ func (r *Reconciler) handleDeletion(ctx context.Context, log logr.Logger, shvol 
 	}
 
 	return nil
+}
+
+// templateToSharedVolumes enqueues reconciliation requests for Deleting SharedVolumes when Templates are updated,
+// since the SharedVolumes cannot be deleted until all Templates have removed their mounts.
+func (r *Reconciler) templateToSharedVolumes(ctx context.Context, obj client.Object) []ctrl.Request {
+	var enqueues []ctrl.Request
+	template := obj.(*clv1alpha2.Template)
+
+	log := ctrl.LoggerFrom(ctx, "reconciler", "sharedvolume-watch-templates")
+
+	//TODO: Prendi gli shvols montati dal template
+	//TODO: filtra quelli deleting
+	//TODO: incodali
+
+	mounts := []string{}
+	for _, env := range template.Spec.EnvironmentList {
+		this := ""
+		for _, mnt := range env.SharedVolumeMounts {
+			this = this + mnt.SharedVolumeRef.Namespace + "/" + mnt.SharedVolumeRef.Namespace + ","
+		}
+		mounts = append(mounts, this)
+	}
+
+	log.Info("AAAA. Received object.", "template", template)
+	log.Info("AAAA. Template spec", "environment-len", len(template.Spec.EnvironmentList), "shvol-mounts", mounts)
+
+	//TODO: Test if after unmounting a shvol from a template, here it gives you the old (with mounted shvol) or the new one (without).
+
+	return enqueues
 }
