@@ -164,6 +164,7 @@ func (r *Reconciler) createOrUpdatePVCSecret(
 	return true, nil
 }
 
+// TODO: Use the utility function after moving.
 func (r *Reconciler) launchPVCProvisionJob(
 	ctx context.Context,
 	log logr.Logger,
